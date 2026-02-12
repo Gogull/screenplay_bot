@@ -22,9 +22,16 @@ NOTES_FOLDER_ID = "1d9B_GZbgOUdOhamN1ypBNlvAbEMO37II"
 st.set_page_config(layout="wide")
 st.title("🎬 Screenplay Conversion")
 
+# -------------------------------------------------
+# CLEAR CACHE ONLY ON FULL PAGE REFRESH
+# -------------------------------------------------
+if "initialized" not in st.session_state:
+    st.cache_data.clear()
+    st.session_state.initialized = True
+
 
 # -------------------------------------------------
-# CACHED DRIVE CALLS
+# CACHED DRIVE CALLS (NO TTL)
 # -------------------------------------------------
 @st.cache_data(show_spinner=False)
 def cached_list_files(folder_id):
@@ -165,6 +172,7 @@ if st.button("🚀 Convert"):
 
     # Step 2: Rewrite screenplay
     status_text.text("Step 2/3: Rewriting screenplay...")
+
     if start_scene and end_scene:
         suffix = f"_S{start_scene:03}-S{end_scene:03}"
     else:
@@ -224,3 +232,4 @@ if st.session_state.change_plan:
         file_name="change_instructions.json",
         mime="application/json"
     )
+
