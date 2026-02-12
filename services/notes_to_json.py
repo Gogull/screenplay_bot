@@ -6,20 +6,18 @@ from google import genai
 from google.genai import types
 from docx import Document
 
+
 # ---------------------------------
-# LOAD API KEY (Streamlit → .env)
+# LOAD API KEY
 # ---------------------------------
 def get_gemini_api_key() -> str:
-    # 1️⃣ Try Streamlit secrets
     try:
         import streamlit as st
         if "GEMINI_API_KEY" in st.secrets:
             return st.secrets["GEMINI_API_KEY"]
     except Exception:
-        # Streamlit not available (local scripts, tests, etc.)
         pass
 
-    # 2️⃣ Load .env from project root (one level above /services)
     try:
         from dotenv import load_dotenv
 
@@ -35,7 +33,6 @@ def get_gemini_api_key() -> str:
     except Exception:
         pass
 
-    # 3️⃣ Fail fast
     raise RuntimeError(
         "❌ GEMINI_API_KEY not found.\n"
         "Set it in Streamlit secrets or in a .env file."
@@ -47,26 +44,45 @@ def get_gemini_api_key() -> str:
 # ---------------------------------
 API_KEY = get_gemini_api_key()
 MODEL_NAME = "gemini-2.5-pro"
-
 client = genai.Client(api_key=API_KEY)
 
+
 # ---------------------------------
-# SYSTEM PROMPT
+# STRONGER SYSTEM PROMPT
 # ---------------------------------
 SYSTEM_PROMPT = """
-You are a screenplay development analyst.
+You are a professional screenplay development analyst.
+
+You will receive a document containing revision notes for a screenplay.
 
 Your task:
-- Read screenplay revision notes
-- Extract requested changes
-- Convert them into structured JSON
+1. Extract actionable changes.
+2. Convert them into structured JSON.
+3. Classify where they apply.
+
+Output format:
+
+{
+  "scene_level_changes": [
+    {
+      "description": "Clear, specific instruction",
+      "placement": "Act I | Act II | Act III | Entire Screenplay | Specific Scene"
+    }
+  ]
+}
 
 Rules:
-- Do NOT rewrite screenplay scenes
-- Do NOT invent new story content
-- Do NOT explain your reasoning
-- Output ONLY valid JSON
+
+- Convert high-level thematic notes into actionable instructions.
+- Preserve original intent of notes.
+- Do NOT rewrite scenes.
+- Do NOT invent new story content.
+- If a note applies to the whole script, use "Entire Screenplay".
+- If unclear but broad, default to "Entire Screenplay".
+- Keep descriptions concise but precise.
+- Output ONLY valid JSON.
 """
+
 
 # ---------------------------------
 # HELPERS
@@ -78,6 +94,30 @@ def read_docx(file_path: str) -> str:
     )
 
 
+def normalize_placement(text: str) -> str:
+    if not text:
+        return "Entire Screenplay"
+
+    t = text.lower()
+
+    if "act i" in t:
+        return "Act I"
+    if "act ii" in t:
+        return "Act II"
+    if "act iii" in t:
+        return "Act III"
+    if "entire" in t or "whole" in t or "throughout" in t:
+        return "Entire Screenplay"
+    if "scene" in t:
+        return "Specific Scene"
+
+    # Fallback
+    return "Entire Screenplay"
+
+
+# ---------------------------------
+# MAIN FUNCTION
+# ---------------------------------
 def notes_docx_to_change_plan(notes_path: str) -> dict:
     notes_text = read_docx(notes_path)
 
@@ -90,4 +130,41 @@ def notes_docx_to_change_plan(notes_path: str) -> dict:
         )
     )
 
-    return json.loads(response.text)
+    # -------------------------------
+    # Parse JSON safely
+    # -------------------------------
+    try:
+        plan = json.loads(response.text)
+    except Exception:
+        raise ValueError("Gemini returned invalid JSON for change plan.")
+
+    if not isinstance(plan, dict):
+        raise ValueError("Change plan must be a JSON object.")
+
+    if "scene_level_changes" not in plan:
+        plan["scene_level_changes"] = []
+
+    if not isinstance(plan["scene_level_changes"], list):
+        raise ValueError("scene_level_changes must be a list.")
+
+    cleaned_changes = []
+
+    for idx, change in enumerate(plan["scene_level_changes"], start=1):
+        if not isinstance(change, dict):
+            continue
+
+        description = change.get("description", "").strip()
+        placement = normalize_placement(change.get("placement", ""))
+
+        if not description:
+            continue
+
+        cleaned_changes.append({
+            "change_id": f"C{idx}",
+            "description": description,
+            "placement": placement
+        })
+
+    return {
+        "scene_level_changes": cleaned_changes
+    }

@@ -7,7 +7,7 @@ __pycache__/
 *.pyc
 
 # Virtual env
-screenbot/
+screen/
 .venv/
 
 # Streamlit
