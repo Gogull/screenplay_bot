@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from typing import Dict, List
 from pathlib import Path
 import os
@@ -38,7 +39,18 @@ API_KEY = get_gemini_api_key()
 MODEL_NAME = "gemini-2.5-flash"
 client = genai.Client(api_key=API_KEY)
 
-SEMAPHORE = asyncio.Semaphore(5)
+# =========================================================
+# SEMAPHORE — lazy init to avoid Streamlit event loop conflict
+# =========================================================
+
+_semaphore: asyncio.Semaphore | None = None
+
+def get_semaphore() -> asyncio.Semaphore:
+    global _semaphore
+    loop = asyncio.get_event_loop()
+    if _semaphore is None or _semaphore._loop is not loop:
+        _semaphore = asyncio.Semaphore(5)
+    return _semaphore
 
 
 # =========================================================
@@ -46,7 +58,7 @@ SEMAPHORE = asyncio.Semaphore(5)
 # =========================================================
 
 async def gemini_json_call(system_prompt: str, user_prompt: str, temperature: float = 0.3) -> dict:
-    async with SEMAPHORE:
+    async with get_semaphore():
         try:
             response = await asyncio.to_thread(
                 client.models.generate_content,
@@ -136,6 +148,9 @@ def assign_acts(screenplay: dict):
 
 async def summarize_scene(scene: dict) -> Dict:
 
+    # Normalize whitespace to prevent formatting artifacts in summaries
+    clean_text = re.sub(r'\s+', ' ', scene["full_text"]).strip()
+
     system_prompt = "You are a professional screenplay analyst. Return ONLY JSON."
 
     user_prompt = f"""
@@ -153,7 +168,7 @@ Return JSON:
 }}
 
 SCENE:
-{scene["full_text"]}
+{clean_text}
 """
 
     result = await gemini_json_call(system_prompt, user_prompt)
@@ -180,11 +195,24 @@ SCENE:
 
 async def generate_global_summary(scene_summaries: List[dict]) -> dict:
 
+    # Strip structural fields before sending to global summary
+    safe_summaries = [
+        {
+            "act":            s.get("act", ""),
+            "summary":        s.get("summary", ""),
+            "purpose":        s.get("purpose", ""),
+            "conflict":       s.get("conflict", ""),
+            "emotional_beat": s.get("emotional_beat", ""),
+            "characters":     s.get("characters", []),
+        }
+        for s in scene_summaries
+    ]
+
     system_prompt = "You are a screenplay architect. Return ONLY JSON."
 
     user_prompt = f"""
 SCENE SUMMARIES:
-{json.dumps(scene_summaries, indent=2)}
+{json.dumps(safe_summaries, indent=2)}
 
 Return JSON:
 {{
@@ -238,14 +266,28 @@ Return JSON:
 
 
 # =========================================================
-# BEAT SHEET (CORE FIX)
+# BEAT SHEET
 # =========================================================
 
 async def generate_beat_sheet(global_summary, act_plan, scene_summaries, notes):
 
+    # Strip structural fields — only pass content-relevant fields
+    safe_summaries = [
+        {
+            "act":            s.get("act", ""),
+            "summary":        s.get("summary", ""),
+            "purpose":        s.get("purpose", ""),
+            "conflict":       s.get("conflict", ""),
+            "emotional_beat": s.get("emotional_beat", ""),
+            "characters":     s.get("characters", []),
+        }
+        for s in scene_summaries
+    ]
+
     system_prompt = (
         "You are an elite screenplay architect. "
-        "Break away from scene numbers and design a clean beat structure."
+        "Break away from scene numbers and design a clean beat structure. "
+        "Never use scene IDs, scene codes, or alphanumeric scene references in your output."
     )
 
     user_prompt = f"""
@@ -255,8 +297,8 @@ GLOBAL SUMMARY:
 ACT PLAN:
 {json.dumps(act_plan, indent=2)}
 
-REFERENCE SCENES (DO NOT reuse structure):
-{json.dumps(scene_summaries, indent=2)}
+REFERENCE SCENES (DO NOT reuse structure, IDs, or headings):
+{json.dumps(safe_summaries, indent=2)}
 
 NOTES:
 {notes}
@@ -264,10 +306,15 @@ NOTES:
 Create a flexible beat sheet (35–45 beats, target ~40).
 
 Rules:
-- NO scene IDs
-- Fresh structure
+- NO scene IDs or scene codes of any kind
+- Fresh structure independent of reference scenes
 - Chronological beats
 - Each beat must be actionable
+- Every character arc note from the NOTES must be reflected in at least one dedicated beat
+- If the NOTES mention a character needing a deduction, revelation, or reasoning moment,
+  give that character an explicit beat where they visibly work through the logic
+- If the NOTES mention symbolic deaths or specific deaths, give each a dedicated beat
+  that dramatizes the symbolism directly
 
 Return JSON:
 {{
@@ -315,7 +362,7 @@ async def architect_agent(fdx_path: str, notes: str = "") -> dict:
     # Act plan
     act_plan = await generate_act_plan(acts, global_summary, notes)
 
-    # 🔥 NEW CORE STEP
+    # Beat sheet
     beat_sheet = await generate_beat_sheet(
         global_summary,
         act_plan,
@@ -326,7 +373,7 @@ async def architect_agent(fdx_path: str, notes: str = "") -> dict:
     return {
         "global_summary": global_summary,
         "act_level_plan": act_plan,
-        "beat_sheet": beat_sheet,  # ✅ CORE OUTPUT
+        "beat_sheet": beat_sheet,
         "scene_summaries": scene_results,  # reference only
         "scenes": canonical["scenes"]      # raw only
     }
