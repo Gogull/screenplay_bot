@@ -315,7 +315,8 @@ Rules:
   give that character an explicit beat where they visibly work through the logic
 - If the NOTES mention symbolic deaths or specific deaths, give each a dedicated beat
   that dramatizes the symbolism directly
-
+- Never generate more than 2 consecutive beats set in the same location. 
+  If a sequence of events all occur in one place, combine them into fewer, longer beats rather than multiple short beats at the same heading
 Return JSON:
 {{
   "total_beats": 0,

@@ -106,6 +106,8 @@ async def write_beat_agent(
             "9. Character names in dialogue headers must be spelled consistently throughout. "
             "Never introduce a new spelling of an existing character name. "
             "Return ONLY valid JSON. No markdown fences. No preamble."
+            "10.Never introduce named props, codes, or specific data (numbers, words, phrases) that contradict what was established in the previous beat. "
+            "If the previous beat established specific details, carry them forward exactly"
         )
 
         user_prompt = f"""
