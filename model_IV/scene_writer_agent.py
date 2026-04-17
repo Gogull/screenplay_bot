@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 from google.genai import types
-from model_III.scene_summarizer import client, MODEL_NAME, get_semaphore
+from model_IV.scene_summarizer import client, MODEL_NAME, get_semaphore
 
 
 # =========================================================
